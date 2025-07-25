@@ -5,13 +5,14 @@ from typing import Any, Callable, Dict, List
 import numpy as np
 
 from framework.base_robustness import BaseLayer2SyntheticEngine
-from framework.helpers import deterministic_hash
+from framework.helpers import LogLevel, deterministic_hash
 
 from .helpers import (
     CSSeriesDatabase,
     EnhancedSyntheticGenerator,
     PersistentPatternStore,
 )
+from .symbol_data import LineBreakSymbolData
 
 # endregion
 
@@ -22,7 +23,13 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
     This class contains all the logic moved from the original Layer2SyntheticEngine.
     """
 
-    def __init__(self, symbol_data, config, random_seed: int, log_fn: Callable):
+    def __init__(
+        self,
+        symbol_data: LineBreakSymbolData,
+        config,
+        random_seed: int,
+        log_fn: Callable,
+    ):
         self.symbol_data = symbol_data
         self.config = config
         self.random_seed = random_seed
@@ -31,27 +38,60 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
         self.cs_database = CSSeriesDatabase(seed=random_seed)
         self.pattern_store = PersistentPatternStore()
 
-        # Initialize infrastructure
+        # --- REMEDIATION START: Restored Infrastructure Management ---
+        self.initialize_symbol_infrastructure()
+        # --- REMEDIATION END ---
+
+    # --- REMEDIATION START: Restored Full Infrastructure Management ---
+    def initialize_symbol_infrastructure(self):
+        """Sets up per-symbol infrastructure with proper validation."""
+        symbol = self.symbol_data._symbol
+        symbol_name = symbol.value
+
         cs_stats = self.symbol_data.compute_cs_statistics()
         cs_to_lb_stats = self.symbol_data.get_cs_to_lb_stats()
         lb_returns = self.symbol_data.get_all_lb_returns()
 
-        db_seed = self.random_seed + deterministic_hash(symbol_data._symbol.value)
-        self.cs_database.initialize_database(cs_stats, cs_to_lb_stats, db_seed)
+        if not cs_stats or not cs_to_lb_stats:
+            self.log_fn(
+                f"Warning: Missing statistics for {symbol_name}", level=LogLevel.WARN
+            )
+            return
 
-        gen_seed = db_seed + 1
-        self.generator = EnhancedSyntheticGenerator(
-            self.cs_database, lb_returns, gen_seed
+        if not self.cs_database.arrays:
+            symbol_seed = self.random_seed + deterministic_hash(symbol_name) % 10000
+            self.cs_database.initialize_database(cs_stats, cs_to_lb_stats, symbol_seed)
+
+        generator_seed = (
+            self.random_seed + deterministic_hash(symbol_name + "_gen") % 10000
         )
-        self.last_processed_time = datetime.min
+        self.generator = EnhancedSyntheticGenerator(
+            symbol, self.cs_database, cs_to_lb_stats, lb_returns, generator_seed
+        )
 
+        self.log_fn(
+            f"Initialized Layer 2 infrastructure for {symbol_name}: "
+            f"CS arrays={len(self.cs_database.arrays)}, "
+            f"LB returns={len(lb_returns)}",
+            level=LogLevel.DEBUG,
+        )
+
+    # --- REMEDIATION END ---
+
+    # --- REMEDIATION START: Fixed Iteration Management ---
     def generate_synthetic_iterations(self, num_iterations: int):
-        """Generates synthetic Line Break data and discovers patterns within it."""
-        new_lb_returns = self.symbol_data.get_new_lb_returns(self.last_processed_time)
+        """Enhanced synthetic generation with proper iteration tracking."""
+        new_lb_returns = self.symbol_data.get_new_lb_returns(
+            self.pattern_store.last_processed_lb.get(
+                self.symbol_data._symbol.value, datetime.min
+            )
+        )
         if len(new_lb_returns) < 10:
             return
 
-        for _ in range(num_iterations):
+        base_iteration = self.pattern_store.iteration_counter
+
+        for i in range(num_iterations):
             synthetic_lb_returns = self.generator.generate_synthetic_lb_sequence(
                 new_lb_returns
             )
@@ -68,21 +108,22 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
                         instance_returns
                     )
                     self.pattern_store.add_pattern_instance(
-                        p_tuple,
-                        _ + self.pattern_store.iteration_counter,
-                        cum_return,
-                        len(instance_returns),
+                        p_tuple, base_iteration + i, cum_return, len(instance_returns)
                     )
 
-        self.last_processed_time = self.symbol_data._last_update_datetime
         self.pattern_store.iteration_counter += num_iterations
+        self.pattern_store.last_processed_lb[self.symbol_data._symbol.value] = (
+            datetime.now()
+        )
+
+    # --- REMEDIATION END ---
 
     def get_pattern_sortino_distribution(
         self, pattern: tuple, direction: str
     ) -> List[float]:
         """Retrieves the Sortino distribution for a pattern from the persistent store."""
         return self.pattern_store.get_iteration_sortinos(
-            pattern, direction, min_setups=5
+            pattern, direction, min_setups_per_iteration=5
         )
 
     def get_synthetic_statistics(self) -> Dict[str, Any]:
@@ -108,7 +149,9 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
         """Discovers 2-bar patterns in a synthetic sequence."""
         discovered = {}
         for i in range(len(lb_returns) - 1):
-            pattern_tuple = self._encode_pattern(lb_returns[i], lb_returns[i + 1])
+            pattern_tuple = self._encode_pattern_from_returns(
+                lb_returns[i], lb_returns[i + 1]
+            )
             instance_returns = self._extract_instance_returns(lb_returns, i + 1)
             if instance_returns:
                 if pattern_tuple not in discovered:
@@ -116,7 +159,7 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
                 discovered[pattern_tuple].append(instance_returns)
         return discovered
 
-    def _encode_pattern(self, return1: float, return2: float) -> tuple:
+    def _encode_pattern_from_returns(self, return1: float, return2: float) -> tuple:
         """Encodes two returns into the 3-bit Line Break pattern tuple."""
         x = 1 if return2 > 0 else 0
         y = 1 if return1 > 0 else 0

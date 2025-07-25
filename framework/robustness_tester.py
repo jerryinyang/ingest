@@ -118,15 +118,26 @@ class RobustnessTester:
             )
             p_data.delay_threshold = context.get("delay_threshold", 0)
 
+        # --- REMEDIATION START: Fixed Layer Results Reporting Keys ---
         return {
             "qualified_patterns": layer3_passed,
             "layer_results": {
-                "layer_1": {"input": len(all_contexts), "passed": len(layer1_passed)},
-                "layer_2": {"input": len(layer1_passed), "passed": len(layer2_passed)},
-                "layer_3": {"input": len(layer2_passed), "passed": len(layer3_passed)},
+                "layer_1": {
+                    "input_count": len(all_contexts),
+                    "passed_count": len(layer1_passed),
+                },
+                "layer_2": {
+                    "input_count": len(layer1_passed),
+                    "passed_count": len(layer2_passed),
+                },
+                "layer_3": {
+                    "input_count": len(layer2_passed),
+                    "passed_count": len(layer3_passed),
+                },
             },
             "robustness_metrics": self._calculate_robustness_metrics(layer3_passed),
         }
+        # --- REMEDIATION END ---
 
     def layer_1_basic_stats(self, contexts: List[Dict]) -> List[Dict]:
         """Layer 1: Filters patterns based on basic sample size and positive expectancy."""

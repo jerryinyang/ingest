@@ -1,4 +1,5 @@
 # region imports
+import math
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterable, List, Literal, Optional
@@ -132,7 +133,7 @@ class BaseSetup:
         }
 
 
-class BasePatternData:
+class BasePatternData(ABC):
     """
     Manages all historical setups for a given pattern/signal.
     Handles bi-directional statistics, qualification status, and primary direction selection.
@@ -162,6 +163,92 @@ class BasePatternData:
     @property
     def pattern(self) -> tuple[int, ...]:
         return self._pattern
+
+    # --- REMEDIATION START: Added abstract property for architectural purity ---
+    @property
+    @abstractmethod
+    def mechanical_direction(self) -> int:
+        """
+        Returns the strategy-specific mechanical direction of the pattern.
+        Must be implemented by subclasses. (e.g., based on pattern encoding)
+        """
+        raise NotImplementedError
+
+    # --- REMEDIATION END ---
+
+    # --- REMEDIATION START: Restored Missing Methods and Properties ---
+    @property
+    def primary_direction(self) -> int:
+        """Returns the primary trading direction based on qualification results."""
+        qualified_dirs = self.get_qualified_directions()
+        if not qualified_dirs:
+            return 0
+        if len(qualified_dirs) == 1:
+            return qualified_dirs[0]
+        long_score = self.qualification_results.get("long", {}).get("score", 0)
+        short_score = self.qualification_results.get("short", {}).get("score", 0)
+        return 1 if long_score >= short_score else -1
+
+    @property
+    def kpi(self) -> KPI:
+        """Returns KPI for the primary direction."""
+        primary_dir = self.primary_direction
+        if primary_dir == 0:
+            return KPI.na_kpi()
+        dir_str = "long" if primary_dir == 1 else "short"
+        stats = self.get_stats_for_direction(dir_str)
+        return stats.get("kpi", KPI.na_kpi())
+
+    @property
+    def mfe_mae_ratio(self) -> float:
+        """Returns the MFE/MAE ratio for risk assessment."""
+        primary_dir = self.primary_direction
+        if primary_dir == 0:
+            return np.nan
+        dir_str = "long" if primary_dir == 1 else "short"
+        stats = self.get_stats_for_direction(dir_str)
+        if not stats:
+            return np.nan
+        mfe_s: Stats = stats.get("mfe", Stats.na_stats())
+        mae_s: Stats = stats.get("mae", Stats.na_stats())
+        mfe_median = mfe_s.median
+        mae_median_abs = abs(mae_s.median)
+        if np.isnan(mfe_median) or np.isnan(mae_median_abs) or mae_median_abs == 0:
+            return np.nan
+        return mfe_median / mae_median_abs
+
+    def compute_base_strength(self, dir_: int, shrink_lambda: float = 30.0) -> float:
+        """Computes statistical strength with shrinkage adjustment."""
+        dir_str = "long" if dir_ == 1 else "short"
+        stats = self.get_stats_for_direction(dir_str)
+        if not stats or dir_ not in (1, -1):
+            return 0.0
+        n = stats.get("count", 0)
+        ret_stats = stats.get("returns", Stats.na_stats())
+        bar_stats = stats.get("bar_count_stats", Stats.na_stats())
+        if (
+            n < 5
+            or ret_stats.is_na()
+            or bar_stats.is_na()
+            or ret_stats.std == 0
+            or bar_stats.mean == 0
+        ):
+            return 0.0
+        ret_mu = ret_stats.mean
+        ret_sd = ret_stats.std
+        bars_mu = bar_stats.mean
+        if bars_mu == 0 or ret_sd == 0:
+            return 0.0
+        mu_bar = ret_mu / bars_mu
+        sd_bar = ret_sd / math.sqrt(bars_mu)
+        if sd_bar == 0:
+            return 0.0
+        z = (mu_bar / sd_bar) * math.sqrt(n)
+        z_shrunk = z / math.sqrt(1.0 + shrink_lambda / n)
+        p_edge = 0.5 * math.erf(z_shrunk / math.sqrt(2.0))
+        return p_edge
+
+    # --- REMEDIATION END ---
 
     def get_stats_for_direction(self, direction: Literal["long", "short"]) -> Dict:
         """Retrieves cached statistics for a given direction, regenerating if needed."""
@@ -217,12 +304,13 @@ class BasePatternData:
                 setup.update(bar)
                 self._cache_outdated = True
 
+    # --- REMEDIATION START: Restored Full Statistical Aggregation ---
     def aggregate_statistics(self) -> Dict[str, Dict]:
-        """Computes and caches detailed statistics for all closed setups."""
+        """Computes comprehensive statistics with full MFE/MAE analysis."""
         if not self._cache_outdated:
             return self._cache_stats
 
-        df = pd.DataFrame(self._metrics)
+        df = self.to_dataframe()
         min_samples = max(1, self._config.min_sample_size)
         if df.empty or len(df) < min_samples:
             self._cache_stats = {"long": {}, "short": {}}
@@ -243,11 +331,16 @@ class BasePatternData:
             if len(log_returns) == 0:
                 continue
             cum_log_returns = np.cumsum(log_returns)
+
             processed_data.append(
                 {
                     "mfe": np.max(cum_log_returns),
                     "mae": np.min(cum_log_returns),
+                    "bars_to_mfe": np.argmax(cum_log_returns) + 1,
+                    "bars_to_mae": np.argmin(cum_log_returns) + 1,
                     "return": cum_log_returns[-1],
+                    "time_duration_secs": row.get("duration_seconds", np.nan),
+                    "bar_count": row.get("bar_count", np.nan),
                 }
             )
 
@@ -272,20 +365,80 @@ class BasePatternData:
                 },
             )
 
+        mfe_stats = describe_series(df_analysis["mfe"])
+        mae_stats = describe_series(df_analysis["mae"])
+        time_duration_stats = describe_series(df_analysis["time_duration_secs"])
+        bars_to_mfe_stats = describe_series(df_analysis["bars_to_mfe"])
+        bars_to_mae_stats = describe_series(df_analysis["bars_to_mae"])
+        bar_count_stats = describe_series(df_analysis["bar_count"])
+
         returns = df_analysis["return"]
         long_kpi, short_kpi = KPI.compute(returns, min_samples=min_samples)
 
         self._cache_stats = {
             "long": {
+                "pattern": self.pattern,
+                "direction": "long",
                 "count": len(df_analysis),
-                "kpi": long_kpi,
+                "mfe": mfe_stats,
+                "mae": mae_stats,
+                "time_duration_secs": time_duration_stats,
+                "bars_to_mfe": bars_to_mfe_stats,
+                "bars_to_mae": bars_to_mae_stats,
+                "bar_count_stats": bar_count_stats,
                 "returns": describe_series(returns),
+                "kpi": long_kpi,
             },
             "short": {
+                "pattern": self.pattern,
+                "direction": "short",
                 "count": len(df_analysis),
-                "kpi": short_kpi,
+                "mfe": describe_series(-df_analysis["mae"]),
+                "mae": describe_series(-df_analysis["mfe"]),
+                "time_duration_secs": time_duration_stats,
+                "bars_to_mfe": bars_to_mae_stats,
+                "bars_to_mae": bars_to_mfe_stats,
+                "bar_count_stats": bar_count_stats,
                 "returns": describe_series(-returns),
+                "kpi": short_kpi,
             },
         }
         self._cache_outdated = False
         return self._cache_stats
+
+    # --- REMEDIATION END ---
+
+    # --- REMEDIATION START: Restored Reporting Methods ---
+    def to_dataframe(self) -> pd.DataFrame:
+        """Converts metrics to DataFrame for analysis."""
+        return pd.DataFrame(self._metrics)
+
+    def get_concise_summary_report(
+        self, pattern_name: Optional[str] = None, force_direction: Optional[int] = None
+    ) -> str:
+        """Generates concise pattern performance summary."""
+        report_lines = []
+        p_name = pattern_name if pattern_name else str(self.pattern)
+        report_lines.append(f"--- Concise Pattern Summary: {p_name} ---")
+        direction_to_report = (
+            force_direction
+            if force_direction is not None
+            else self.mechanical_direction
+        )
+        direction_str = "long" if direction_to_report == 1 else "short"
+        stats = self.get_stats_for_direction(direction_str)
+        if not stats:
+            return f"No data for direction: {direction_str}."
+        count = stats.get("count", 0)
+        kpi = stats.get("kpi", KPI.na_kpi())
+        qual = self.qualification_results.get(direction_str, {})
+        report_lines.append(
+            f"Occurrences: {count} | Reporting For: {direction_str.upper()} | Qualified: {qual.get('is_qualified', False)} (Score: {qual.get('score', 0.0):.2f})"
+        )
+        if not kpi.is_na():
+            report_lines.append(
+                f"  Expectancy: {kpi.expectancy:.4f} | Win Rate: {kpi.win_rate:.2%} | Profit Factor: {kpi.profit_factor:.2f}"
+            )
+        return "\n".join(report_lines)
+
+    # --- REMEDIATION END ---

@@ -1,6 +1,6 @@
 # region imports
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Dict, Optional
 
 from AlgorithmImports import (
     IDataConsolidator,
@@ -135,23 +135,38 @@ class BaseSymbolData:
                 self._symbol, self._indicators["vp"], self._consolidator, selector
             )
 
+    # --- REMEDIATION START: Enhanced Warmup Logic ---
     def _warmup_data(self):
-        """Warms up indicators and charts with historical data."""
+        """Enhanced warmup with better error handling."""
         start_time = self._last_update_datetime or (
             self._algo.time - timedelta(weeks=self._params.warm_period_weeks)
         )
-        history_bars = self._algo.history[self._bar_type](
-            self._symbol, start_time, self._algo.time, self._params.resolution
-        )
 
-        for bar in history_bars:
-            bar_to_process = getattr(bar, "Value", bar)
-            if isinstance(bar_to_process, (TradeBar, QuoteBar)):
-                if (
-                    self._last_update_datetime is None
-                    or bar_to_process.end_time > self._last_update_datetime
+        try:
+            history_bars = self._algo.history[self._bar_type](
+                self._symbol, start_time, self._algo.time, self._params.resolution
+            )
+
+            for bar in history_bars:
+                bar_to_process = None
+                # Handle different data structures for futures/equities
+                if hasattr(bar, "Value") and isinstance(
+                    bar.Value, (TradeBar, QuoteBar)
                 ):
-                    self._consolidator.update(bar_to_process)
+                    bar_to_process = bar.Value
+                elif isinstance(bar, (TradeBar, QuoteBar)):
+                    bar_to_process = bar
+
+                if bar_to_process:
+                    if (
+                        self._last_update_datetime is None
+                        or bar_to_process.end_time > self._last_update_datetime
+                    ):
+                        self._consolidator.update(bar_to_process)
+        except Exception as e:
+            self._algo.log(f"Warning: Warmup failed for {self._symbol}: {e}")
+
+    # --- REMEDIATION END ---
 
     def _consolidation_handler(self, sender: object, consolidated_bar: BAR_TYPE):
         """Handles consolidated bars and routes them for processing."""
@@ -214,3 +229,38 @@ class BaseSymbolData:
             for key in required_indicators
         )
         return chart_ready and indicators_ready
+
+    # --- REMEDIATION START: Restored Missing Methods ---
+    def plot_chart(self):
+        """Plots custom chart bars for visualization."""
+        if not self._chart or self._chart.custom_data.count == 0:
+            return
+
+        symbol = self._symbol
+        chart_name = f"CustomChart_{symbol}"
+        bar = self._chart.custom_data[0]
+
+        self._algo.plot(
+            chart_name,
+            "Candlestick",
+            open=bar.open,
+            high=bar.high,
+            low=bar.low,
+            close=bar.close,
+        )
+
+    def report_stats(self) -> Dict:
+        """Generates reports for qualified patterns/signals."""
+        strategy_reports = {}
+        if hasattr(self._strategy_logic, "report_stats"):
+            strategy_reports = self._strategy_logic.report_stats()
+
+        base_info = {
+            "symbol": str(self._symbol),
+            "indicators_ready": all(ind.is_ready for ind in self._indicators.values()),
+            "chart_ready": self.is_ready(),
+        }
+
+        return {"strategy_reports": strategy_reports, "base_info": base_info}
+
+    # --- REMEDIATION END ---

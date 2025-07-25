@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import quantstats as qs
+from AlgorithmImports import Symbol
 
 # endregion
 
@@ -86,6 +87,7 @@ class CSToLBTracker:
         n = self.total_linebreaks_formed
         if n == 1:
             self.mean_duration = new_count
+            self.variance_duration = 0.0
             self.min_duration = new_count
             self.max_duration = new_count
         else:
@@ -168,6 +170,53 @@ class CSSeriesDatabase:
             )
         self.last_refresh = datetime.now()
 
+    # --- REMEDIATION START: Restored Missing Methods ---
+    def refresh_database(self, cs_stats: CSReturnStats, cs_to_lb_stats: CSToLBStats):
+        """Replace oldest 20% of arrays with new ones using updated statistics."""
+        if not self.arrays:
+            return
+
+        self.cs_stats = cs_stats
+        refresh_count = int(self.database_size * self.refresh_fraction)
+
+        sorted_indices = sorted(
+            range(len(self.array_metadata)),
+            key=lambda i: self.array_metadata[i]["generation_time"],
+        )
+
+        for i in range(min(refresh_count, len(sorted_indices))):
+            idx = sorted_indices[i]
+            length = self._sample_array_length(cs_to_lb_stats)
+            new_array = self._generate_positive_return_array(length)
+            self.arrays[idx] = new_array
+            self.array_metadata[idx] = {
+                "length": length,
+                "generation_time": datetime.now(),
+                "generation_index": self.array_metadata[idx]["generation_index"]
+                + self.database_size,
+            }
+
+        self.last_refresh = datetime.now()
+
+    def get_database_stats(self) -> Dict[str, Any]:
+        """Return summary statistics of current database."""
+        if not self.arrays:
+            return {"status": "empty"}
+
+        lengths = [meta["length"] for meta in self.array_metadata]
+
+        return {
+            "total_arrays": len(self.arrays),
+            "mean_length": np.mean(lengths),
+            "std_length": np.std(lengths),
+            "min_length": np.min(lengths),
+            "max_length": np.max(lengths),
+            "last_refresh": self.last_refresh,
+            "generation_seed": self.generation_seed,
+        }
+
+    # --- REMEDIATION END ---
+
     def sample_array(self, index: Optional[int] = None) -> np.ndarray:
         """Sample a return array from the database."""
         if not self.arrays:
@@ -221,10 +270,16 @@ class PersistentPatternStore:
     Maintains historical synthetic pattern performance across qualification cycles.
     """
 
+    # --- REMEDIATION START: Restored State Tracking ---
     def __init__(self):
         self.pattern_iterations: Dict[
             tuple, Dict[int, List[SyntheticPatternInstance]]
         ] = {}
+        self.iteration_counter = 0
+        self.last_processed_lb: Dict[str, datetime] = {}
+        self.creation_time = datetime.now()
+
+    # --- REMEDIATION END ---
 
     def add_pattern_instance(
         self, pattern: tuple, iteration: int, cumulative_return: float, setup_count: int
@@ -245,15 +300,15 @@ class PersistentPatternStore:
         self.pattern_iterations[pattern][iteration].append(instance)
 
     def get_iteration_sortinos(
-        self, pattern: tuple, direction: str, min_setups: int = 5
+        self, pattern: tuple, direction: str, min_setups_per_iteration: int = 5
     ) -> List[float]:
         """Get Sortino ratios for all valid iterations of a pattern."""
         if pattern not in self.pattern_iterations:
             return []
 
-        sortinos = []
+        sortino_values = []
         for instances in self.pattern_iterations[pattern].values():
-            if len(instances) < min_setups:
+            if len(instances) < min_setups_per_iteration:
                 continue
 
             returns = [inst.cumulative_return for inst in instances]
@@ -263,19 +318,57 @@ class PersistentPatternStore:
             if len(returns) >= 10:
                 try:
                     dates = pd.date_range("2023-01-01", periods=len(returns), freq="D")
-                    sortino = qs.stats.sortino(pd.Series(returns, index=dates))
+                    returns_series = pd.Series(returns, index=dates)
+                    sortino = qs.stats.sortino(returns_series)
                     if not np.isnan(sortino):
-                        sortinos.append(sortino * self._apply_weighting(len(returns)))
+                        sortino_values.append(
+                            self.apply_sample_size_weighting(sortino, len(returns))
+                        )
                 except Exception:
                     continue
-        return sortinos
+        return sortino_values
 
-    def _apply_weighting(self, sample_size: int, target_size: int = 30) -> float:
+    def apply_sample_size_weighting(
+        self, sortino: float, sample_size: int, target_size: int = 30
+    ) -> float:
         """Apply sample size weighting to penalize small samples."""
         if sample_size >= target_size:
-            return 1.0
+            return sortino
         weight = sample_size / target_size
-        return 0.5 + (0.5 * weight)
+        return sortino * (0.5 + (0.5 * weight))
+
+    # --- REMEDIATION START: Restored Missing Methods ---
+    def clear_old_iterations(self, keep_recent: int = 10000):
+        """Remove oldest iterations beyond retention limit."""
+        for pattern in list(self.pattern_iterations.keys()):
+            iterations = self.pattern_iterations[pattern]
+
+            if len(iterations) > keep_recent:
+                sorted_iterations = sorted(iterations.keys())
+                keep_iterations = sorted_iterations[-keep_recent:]
+                self.pattern_iterations[pattern] = {
+                    k: v for k, v in iterations.items() if k in keep_iterations
+                }
+
+    def get_pattern_summary(self, pattern: tuple) -> Dict[str, Any]:
+        """Get summary statistics for a pattern across all iterations."""
+        if pattern not in self.pattern_iterations:
+            return {"status": "not_found"}
+
+        total_instances = 0
+        total_iterations = len(self.pattern_iterations[pattern])
+
+        for instances in self.pattern_iterations[pattern].values():
+            total_instances += len(instances)
+
+        return {
+            "pattern": pattern,
+            "total_iterations": total_iterations,
+            "total_instances": total_instances,
+            "avg_instances_per_iteration": total_instances / max(total_iterations, 1),
+        }
+
+    # --- REMEDIATION END ---
 
 
 class EnhancedSyntheticGenerator:
@@ -284,18 +377,29 @@ class EnhancedSyntheticGenerator:
     """
 
     def __init__(
-        self, cs_database: CSSeriesDatabase, lb_returns: List[float], seed: int
+        self,
+        symbol: Symbol,
+        cs_database: CSSeriesDatabase,
+        cs_to_lb_stats: CSToLBStats,
+        lb_returns: List[float],
+        seed: int,
     ):
+        self.symbol = symbol
         self.cs_database = cs_database
+        self.cs_to_lb_stats = cs_to_lb_stats
         self.rng = random.Random(seed)
         self.lb_return_stats = self._learn_lb_return_properties(lb_returns)
 
     def _learn_lb_return_properties(self, lb_returns: List[float]) -> Dict[str, Any]:
         """Learn statistical properties of historical Line Break returns."""
         if not lb_returns:
-            return {"mean": 0.01, "std": 0.02}
+            return {"mean": 0.01, "std": 0.02, "positive_ratio": 0.5}
         arr = np.array(lb_returns)
-        return {"mean": np.mean(arr), "std": np.std(arr)}
+        return {
+            "mean": np.mean(arr),
+            "std": np.std(arr),
+            "positive_ratio": np.sum(arr > 0) / len(arr),
+        }
 
     def generate_synthetic_lb_sequence(
         self, real_lb_returns: List[float]

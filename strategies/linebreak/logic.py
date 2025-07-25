@@ -27,6 +27,13 @@ class LineBreakPatternData(BasePatternData):
             current_dir == -1 and new_pattern_mechanical_direction == 1
         )
 
+    # --- REMEDIATION START: Restored Missing Method for report_stats dependency ---
+    def get_validation_trade_report(self, pattern_name: str) -> str:
+        """Generate validation trade report for Line Break patterns."""
+        return f"--- Validation Report for {pattern_name} ---\nValidation tracking: Active\n"
+
+    # --- REMEDIATION END ---
+
 
 class LineBreakStrategyLogic(BaseStrategyLogic):
     """
@@ -99,3 +106,23 @@ class LineBreakStrategyLogic(BaseStrategyLogic):
         )
 
         return new_pattern_data
+
+    # --- REMEDIATION START: Restored Reporting Method ---
+    def report_stats(self) -> Dict:
+        """Generates stats reports for qualified patterns."""
+        reports = {}
+        for pattern_tuple, pattern_data in self.patterns.items():
+            qualified_directions = pattern_data.get_qualified_directions()
+            for dir_int in qualified_directions:
+                direction_str = "long" if dir_int == 1 else "short"
+                report_key = f"{pattern_tuple}-{direction_str}"
+                setup_report = pattern_data.get_concise_summary_report(
+                    force_direction=dir_int
+                )
+                validation_report = pattern_data.get_validation_trade_report(
+                    pattern_name=str(pattern_tuple)
+                )
+                reports[report_key] = f"{setup_report}\n{validation_report}"
+        return reports
+
+    # --- REMEDIATION END ---

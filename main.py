@@ -51,20 +51,13 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         self.log_level_threshold = LogLevel.INFO
 
         # --- Strategy and Framework Initialization ---
-        # 1. Instantiate the strategy-specific configuration
         self.config = LineBreakConfig()
-
-        # 2. Instantiate the core PortfolioManager, injecting the Line Break strategy's
-        #    SymbolData and StrategyLogic classes. This is the key to decoupling.
         self.pm = PortfolioManager(
             self,
             self.config,
             symbol_data_class=LineBreakSymbolData,
             strategy_logic_class=LineBreakStrategyLogic,
         )
-
-        # 3. Instantiate the core RobustnessTester, injecting the Line Break strategy's
-        #    synthetic engine. This allows for strategy-specific noise models.
         self.rt = RobustnessTester(
             self,
             self.config,
@@ -78,12 +71,24 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         self.universe_settings.resolution = self.config.resolution
 
         # --- Scheduled Tasks ---
-        # Schedule the pattern qualification process to run quarterly.
         self.schedule.on(
             self.date_rules.month_start(days_offset=1),
             self.time_rules.at(0, 0),
             self.qualify_patterns,
         )
+
+        # --- REMEDIATION START: Restored Missing Schedules ---
+        self.schedule.on(
+            self.date_rules.year_start(),
+            self.time_rules.midnight,
+            self.report_pattern_stats,
+        )
+        self.schedule.on(
+            self.date_rules.every_day(),
+            self.time_rules.midnight,
+            self.cleanup_inactive_symbols,
+        )
+        # --- REMEDIATION END ---
 
     def coarse_selection_function(
         self, coarse: List[CoarseFundamental]
@@ -106,8 +111,7 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
 
     def on_data(self, slice: Slice):
         """
-        Main data handler. This is kept lean, as all logic is delegated to the
-        PortfolioManager, which then routes data to the appropriate SymbolData instance.
+        Main data handler, delegating logic to the PortfolioManager.
         """
         if self.is_warming_up:
             return
@@ -120,8 +124,6 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         self.log(
             "--- Starting Quarterly Pattern Qualification ---", level=LogLevel.INFO
         )
-
-        # 1. Collect all detected patterns and symbol data from the Portfolio Manager.
         pattern_data_by_symbol = self.pm.collect_pattern_data()
         all_symbol_data = self.pm.get_all_symbol_data()
 
@@ -129,20 +131,13 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
             self.log("No patterns found to qualify.", level=LogLevel.WARN)
             return
 
-        # 2. Run the qualification process using the Robustness Tester.
         qualification_results = self.rt.qualify_patterns(
             pattern_data_by_symbol, all_symbol_data
         )
-
-        # 3. Store the results as a snapshot in the Portfolio Manager for
-        #    walk-forward validation.
         qualified_patterns = qualification_results.get("qualified_patterns", [])
         self.pm.store_qualification_snapshot(qualified_patterns)
-
-        # 4. Analyze the performance of the previous period's trades (walk-forward).
         forward_performance = self.pm.analyze_forward_performance()
 
-        # 5. Log a summary of the results.
         self.log(
             f"Qualification complete. Results: {qualification_results.get('layer_results')}",
             level=LogLevel.INFO,
@@ -155,6 +150,55 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
             f"Forward Performance Analysis: {forward_performance}", level=LogLevel.INFO
         )
 
+    # --- REMEDIATION START: Restored Missing Methods ---
+    def report_pattern_stats(self):
+        """Generates comprehensive pattern statistics report."""
+        self.log("=" * 40, level=LogLevel.INFO)
+        self.log(
+            f"PATTERN STATISTICS REPORT AS OF {self.time.date()}", level=LogLevel.INFO
+        )
+        self.log("=" * 40, level=LogLevel.INFO)
+
+        portfolio_analysis = self.pm.aggregate_analyses()
+
+        self.log(
+            f"Total Symbols Analyzed: {portfolio_analysis.get('total_symbols', 0)}",
+            level=LogLevel.INFO,
+        )
+        self.log(
+            f"Total Patterns Discovered: {portfolio_analysis.get('total_patterns', 0)}",
+            level=LogLevel.INFO,
+        )
+        self.log(
+            f"Qualified Patterns: {portfolio_analysis.get('qualified_patterns', 0)}",
+            level=LogLevel.INFO,
+        )
+
+        setup_performance = portfolio_analysis.get("setup_performance", {})
+        if setup_performance and setup_performance.get("count", 0) > 0:
+            self.log("\n--- Overall Setup Performance ---", level=LogLevel.INFO)
+            self.log(f"Total Setups: {setup_performance['count']}", level=LogLevel.INFO)
+            self.log(
+                f"Expectancy: {setup_performance.get('expectancy', 0.0):.4f}",
+                level=LogLevel.INFO,
+            )
+            self.log(
+                f"Win Rate: {setup_performance.get('win_rate', 0.0):.2%}",
+                level=LogLevel.INFO,
+            )
+            self.log(
+                f"Sortino Ratio: {setup_performance.get('sortino', 0.0):.2f}",
+                level=LogLevel.INFO,
+            )
+
+        self.log("=" * 40, level=LogLevel.INFO)
+
+    def cleanup_inactive_symbols(self):
+        """Daily cleanup of inactive symbol data."""
+        self.pm.cleanup_inactive_symbols()
+
+    # --- REMEDIATION END ---
+
     def on_end_of_algorithm(self):
         """Handles cleanup at the end of the backtest."""
         self.log("--- End of Algorithm ---", level=LogLevel.INFO)
@@ -164,8 +208,4 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
     def log(self, message: str, level: LogLevel = LogLevel.DEBUG, **kwargs):
         """Custom logging function to control verbosity."""
         if level.value >= self.log_level_threshold.value:
-            log_message = f"{self.time} [{level.name}]: {message}"
-            if kwargs:
-                for key, value in kwargs.items():
-                    log_message += f" | {key}={value}"
-            self.debug(log_message)
+            self.debug(f"{self.time} [{level.name}]: {message}")

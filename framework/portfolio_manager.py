@@ -76,6 +76,81 @@ class PortfolioManager:
         """Returns the dictionary of all SymbolData objects."""
         return self._symbol_data
 
+    # --- REMEDIATION START: Restored Missing Analysis Methods ---
+    def collect_setups(self) -> List[Dict]:
+        """Collects all setup metrics across all symbols and patterns."""
+        all_setups = []
+        for symbol, symbol_data in self._symbol_data.items():
+            strategy_logic = symbol_data._strategy_logic
+            for pattern_data in strategy_logic.patterns.values():
+                for setup_dict in pattern_data._metrics:
+                    enhanced_setup = setup_dict.copy()
+                    enhanced_setup["symbol"] = symbol
+                    enhanced_setup["pattern"] = pattern_data.pattern
+                    all_setups.append(enhanced_setup)
+        return all_setups
+
+    def aggregate_analyses(self) -> Dict[str, Any]:
+        """Aggregates Setup metrics portfolio-wide."""
+        portfolio_analysis = {
+            "total_symbols": len(self._symbol_data),
+            "total_patterns": 0,
+            "qualified_patterns": 0,
+            "setup_performance": {},
+            "symbol_breakdown": {},
+        }
+        all_setup_returns = []
+
+        for symbol, symbol_data in self._symbol_data.items():
+            strategy_logic = symbol_data._strategy_logic
+            symbol_stats = {
+                "patterns": len(strategy_logic.patterns),
+                "qualified": 0,
+                "setups": 0,
+            }
+
+            for pattern_data in strategy_logic.patterns.values():
+                portfolio_analysis["total_patterns"] += 1
+                symbol_stats["setups"] += len(pattern_data._metrics)
+
+                if pattern_data.get_qualified_directions():
+                    portfolio_analysis["qualified_patterns"] += 1
+                    symbol_stats["qualified"] += 1
+
+                for setup_dict in pattern_data._metrics:
+                    setup_return = setup_dict.get("return", np.nan)
+                    if not np.isnan(setup_return):
+                        all_setup_returns.append(setup_return)
+
+            portfolio_analysis["symbol_breakdown"][str(symbol)] = symbol_stats
+
+        if all_setup_returns:
+            portfolio_analysis["setup_performance"] = (
+                self._calculate_performance_metrics(all_setup_returns)
+            )
+
+        return portfolio_analysis
+
+    def cleanup_inactive_symbols(self):
+        """Removes symbols that are both uninvested and marked ineligible."""
+        symbols_to_remove = []
+        for symbol, symbol_data in self._symbol_data.items():
+            if (
+                not symbol_data.is_eligible_for_new_trades
+                and not self._algo.portfolio[symbol].invested
+            ):
+                symbols_to_remove.append(symbol)
+
+        for symbol in symbols_to_remove:
+            self._symbol_data[symbol].deinit()
+            self._symbol_data.pop(symbol, None)
+            self._algo.log(
+                f"Cleaned up inactive symbol data: {symbol}",
+                level=LogLevel.DEBUG,
+            )
+
+    # --- REMEDIATION END ---
+
     def store_qualification_snapshot(self, qualified_contexts: List[Dict]):
         """Saves the latest qualification results for walk-forward validation."""
         self._qualification_snapshot.clear()

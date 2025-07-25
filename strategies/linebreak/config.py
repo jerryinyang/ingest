@@ -1,5 +1,6 @@
 # region imports
 from dataclasses import dataclass, field
+from datetime import timedelta  # noqa
 
 from framework.helpers import BaseStrategyConfig
 

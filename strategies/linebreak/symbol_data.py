@@ -1,6 +1,6 @@
 # region imports
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from AlgorithmImports import QCAlgorithm, QuoteBar, Symbol, TradeBar
@@ -36,6 +36,10 @@ class LineBreakSymbolData(BaseSymbolData):
         self._lb_return_history: List[float] = []
         self._lb_return_timestamps: List[datetime] = []
         self._previous_close: Optional[float] = None
+        # --- REMEDIATION START: Restored State Tracking Attributes ---
+        self._last_cs_stats_update: datetime = datetime.min
+        self._last_processed_lb_time: datetime = datetime.min
+        # --- REMEDIATION END ---
         super().__init__(algo, symbol, params, strategy_logic)
 
     def _initialize_strategy_components(self):
@@ -102,40 +106,64 @@ class LineBreakSymbolData(BaseSymbolData):
                 self._cs_return_collector = self._cs_return_collector[-1000:]
         self._previous_close = bar.close
 
+    # --- REMEDIATION START: Restored Robust CS Statistics Computation ---
     def compute_cs_statistics(self) -> CSReturnStats:
-        """Computes and caches candlestick return statistics."""
+        """Computes CS return stats with robust error handling."""
         if len(self._cs_return_collector) < 50:
-            return CSReturnStats(0.001, 0.02, 0.0, 3.0, {50: 0.0}, 0.0, 0.0)
+            return CSReturnStats(
+                mean_return=0.001,
+                std_return=0.02,
+                skew=0.0,
+                kurtosis=3.0,
+                percentiles={25: -0.01, 50: 0.0, 75: 0.01},
+                autocorrelation_lag1=0.0,
+                autocorrelation_lag2=0.0,
+            )
 
         returns = np.array(self._cs_return_collector)
+        mean_return = np.mean(returns)
+        std_return = np.std(returns)
+        skew_val = skew(returns) if len(returns) > 2 else 0.0
+        kurtosis_val = kurtosis(returns) if len(returns) > 2 else 3.0
+        percentiles = {p: np.percentile(returns, p) for p in [10, 25, 50, 75, 90]}
+
         autocorr_lag1, autocorr_lag2 = 0.0, 0.0
-        if len(returns) > 10:
-            corr_matrix = np.corrcoef(returns[:-1], returns[1:])
-            if not np.isnan(corr_matrix[0, 1]):
-                autocorr_lag1 = corr_matrix[0, 1]
-        if len(returns) > 20:
-            corr_matrix = np.corrcoef(returns[:-2], returns[2:])
-            if not np.isnan(corr_matrix[0, 1]):
-                autocorr_lag2 = corr_matrix[0, 1]
+        try:
+            if len(returns) > 10:
+                returns_shifted1, returns_orig1 = returns[1:], returns[:-1]
+                if len(returns_shifted1) > 0 and np.std(returns_orig1) > 1e-10:
+                    correlation_matrix = np.corrcoef(returns_orig1, returns_shifted1)
+                    if not np.isnan(correlation_matrix[0, 1]):
+                        autocorr_lag1 = correlation_matrix[0, 1]
+            if len(returns) > 20:
+                returns_shifted2, returns_orig2 = returns[2:], returns[:-2]
+                if len(returns_shifted2) > 0 and np.std(returns_orig2) > 1e-10:
+                    correlation_matrix = np.corrcoef(returns_orig2, returns_shifted2)
+                    if not np.isnan(correlation_matrix[0, 1]):
+                        autocorr_lag2 = correlation_matrix[0, 1]
+        except Exception:
+            pass
 
         self._cs_stats = CSReturnStats(
-            mean_return=np.mean(returns),
-            std_return=np.std(returns),
-            skew=skew(returns),
-            kurtosis=kurtosis(returns),
-            percentiles={p: np.percentile(returns, p) for p in [10, 25, 50, 75, 90]},
-            autocorrelation_lag1=autocorr_lag1,
-            autocorrelation_lag2=autocorr_lag2,
+            mean_return=float(mean_return),
+            std_return=float(std_return),
+            skew=float(skew_val),
+            kurtosis=float(kurtosis_val),
+            percentiles=percentiles,
+            autocorrelation_lag1=float(autocorr_lag1),
+            autocorrelation_lag2=float(autocorr_lag2),
         )
+        self._last_cs_stats_update = self._algo.time
         return self._cs_stats
+
+    # --- REMEDIATION END ---
 
     def update_lb_return_history(self):
         """Updates the list of Line Break returns when a new LB bar is formed."""
-        if self._chart.custom_data.count < 2:
+        if not self._chart or self._chart.custom_data.count < 2:
             return
 
-        current_bar = self._chart.custom_data[0]
-        prev_bar = self._chart.custom_data[1]
+        current_bar, prev_bar = self._chart.custom_data[0], self._chart.custom_data[1]
 
         if prev_bar.close > 0 and current_bar.close > 0:
             lb_return = np.log(current_bar.close / prev_bar.close)
@@ -145,6 +173,36 @@ class LineBreakSymbolData(BaseSymbolData):
             if len(self._lb_return_history) > 500:
                 self._lb_return_history = self._lb_return_history[-500:]
                 self._lb_return_timestamps = self._lb_return_timestamps[-500:]
+
+            self._last_processed_lb_time = current_bar.end_time
+
+    # --- REMEDIATION START: Restored Missing Helper/Reporting Methods ---
+    def get_cs_return_stats(self) -> Optional[CSReturnStats]:
+        """Get CS return statistics with caching."""
+        if self._cs_stats and (self._algo.time - self._last_cs_stats_update).days < 90:
+            return self._cs_stats
+        return self.compute_cs_statistics()
+
+    def get_lb_return_info(self) -> Dict[str, Any]:
+        """Get comprehensive LB return information for debugging."""
+        if not self._lb_return_history:
+            return {"status": "empty"}
+
+        return {
+            "total_returns": len(self._lb_return_history),
+            "timestamp_count": len(self._lb_return_timestamps),
+            "lists_synchronized": len(self._lb_return_history)
+            == len(self._lb_return_timestamps),
+            "earliest_timestamp": min(self._lb_return_timestamps)
+            if self._lb_return_timestamps
+            else None,
+            "latest_timestamp": max(self._lb_return_timestamps)
+            if self._lb_return_timestamps
+            else None,
+            "last_processed": self._last_processed_lb_time,
+        }
+
+    # --- REMEDIATION END ---
 
     def get_cs_to_lb_stats(self) -> CSToLBStats:
         return self._cs_to_lb_tracker.get_comprehensive_stats()

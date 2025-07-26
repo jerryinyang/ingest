@@ -1,6 +1,14 @@
 # region imports
 
-from AlgorithmImports import *
+from typing import List
+
+from AlgorithmImports import (
+    CoarseFundamental,
+    QCAlgorithm,
+    SecurityChanges,
+    Slice,
+    Symbol,
+)
 
 # Core Framework Imports
 from framework.helpers import LogLevel

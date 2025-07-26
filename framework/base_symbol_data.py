@@ -14,9 +14,7 @@ from AlgorithmImports import (
 )
 
 from framework.charts import BAR_TYPE, cChart
-from framework.helpers import BaseStrategyConfig
-
-# from framework.base_strategy_logic import BaseStrategyLogic # circular import guard
+from framework.helpers import BaseStrategyConfig, LogLevel
 
 # endregion
 
@@ -70,7 +68,7 @@ class BaseSymbolData:
         """
         if not isinstance(self._params.resolution_delta, timedelta):
             error_message = f"SymbolData for {self._symbol} failed to initialize: 'resolution_delta' must be a timedelta."
-            self._algo.debug(error_message)
+            self._algo.log(error_message, log_level=LogLevel.ERROR)
             return False
 
         config = self._algo.subscription_manager.subscription_data_config_service.get_subscription_data_configs(
@@ -125,23 +123,39 @@ class BaseSymbolData:
 
         if "natr" not in self._indicators:
             self._indicators["natr"] = NormalizedAverageTrueRange(14)
-            self._algo.register_indicator(
-                self._symbol, self._indicators["natr"], self._consolidator, selector
-            )
+            self._register_indicator_with_selector("natr", self._indicators["natr"])
 
         if "vp" not in self._indicators:
             self._indicators["vp"] = VolumeProfile(f"{self._symbol}-volume-profile", 14)
-            self._algo.register_indicator(
-                self._symbol, self._indicators["vp"], self._consolidator, selector
-            )
+            self._register_indicator_with_selector("vp", self._indicators["vp"])
 
-    # --- REMEDIATION START: Enhanced Warmup Logic ---
+    def _register_indicator_with_selector(
+        self, indicator_name: str, indicator: Indicator
+    ):
+        """Helper method to register indicators with proper QuoteBar handling."""
+        if self._bar_type == QuoteBar:
+            self._algo.register_indicator(
+                self._symbol,
+                indicator,
+                self._consolidator,
+                lambda quote_bar: TradeBar(
+                    quote_bar.time,
+                    quote_bar.symbol,
+                    (quote_bar.bid.close + quote_bar.ask.close) / 2.0,
+                    (quote_bar.bid.close + quote_bar.ask.close) / 2.0,
+                    (quote_bar.bid.close + quote_bar.ask.close) / 2.0,
+                    (quote_bar.bid.close + quote_bar.ask.close) / 2.0,
+                    quote_bar.last_bid_size + quote_bar.last_ask_size,
+                ),
+            )
+        else:
+            self._algo.register_indicator(self._symbol, indicator, self._consolidator)
+
     def _warmup_data(self):
         """Enhanced warmup with better error handling."""
         start_time = self._last_update_datetime or (
             self._algo.time - timedelta(weeks=self._params.warm_period_weeks)
         )
-
         try:
             history_bars = self._algo.history[self._bar_type](
                 self._symbol, start_time, self._algo.time, self._params.resolution
@@ -149,13 +163,20 @@ class BaseSymbolData:
 
             for bar in history_bars:
                 bar_to_process = None
-                # Handle different data structures for futures/equities
-                if hasattr(bar, "Value") and isinstance(
-                    bar.Value, (TradeBar, QuoteBar)
-                ):
-                    bar_to_process = bar.Value
-                elif isinstance(bar, (TradeBar, QuoteBar)):
+
+                # First, check if the bar itself is the correct type using the reliable method.
+                # This correctly handles standard equities.
+                if bar.get_type().name in ["TradeBar", "QuoteBar"]:
                     bar_to_process = bar
+
+                # Handle different data structures for futures/equities
+                # Second, check if it's a container object (like for Futures)
+                # by checking for .Value AND checking the type of .Value.
+                elif hasattr(bar, "Value") and bar.Value.get_type().name in [
+                    "TradeBar",
+                    "QuoteBar",
+                ]:
+                    bar_to_process = bar.Value
 
                 if bar_to_process:
                     if (
@@ -166,12 +187,21 @@ class BaseSymbolData:
         except Exception as e:
             self._algo.log(f"Warning: Warmup failed for {self._symbol}: {e}")
 
-    # --- REMEDIATION END ---
-
     def _consolidation_handler(self, sender: object, consolidated_bar: BAR_TYPE):
-        """Handles consolidated bars and routes them for processing."""
-        bar_to_process = getattr(consolidated_bar, "Value", consolidated_bar)
-        if not isinstance(bar_to_process, (TradeBar, QuoteBar)):
+        """Handles consolidated bars and routes them for processing with robust type checking."""
+        bar_to_process = None
+
+        # First, check if the bar itself is the correct type using the reliable method.
+        if consolidated_bar.get_type().name in ["TradeBar", "QuoteBar"]:
+            bar_to_process = consolidated_bar
+        # Second, check if it's a container object (like for Futures)
+        elif hasattr(
+            consolidated_bar, "Value"
+        ) and consolidated_bar.Value.get_type().name in ["TradeBar", "QuoteBar"]:
+            bar_to_process = consolidated_bar.Value
+
+        if not bar_to_process:
+            # If we couldn't extract a valid bar, we cannot proceed.
             return
 
         self._last_update_datetime = bar_to_process.end_time
@@ -230,7 +260,6 @@ class BaseSymbolData:
         )
         return chart_ready and indicators_ready
 
-    # --- REMEDIATION START: Restored Missing Methods ---
     def plot_chart(self):
         """Plots custom chart bars for visualization."""
         if not self._chart or self._chart.custom_data.count == 0:
@@ -262,5 +291,3 @@ class BaseSymbolData:
         }
 
         return {"strategy_reports": strategy_reports, "base_info": base_info}
-
-    # --- REMEDIATION END ---

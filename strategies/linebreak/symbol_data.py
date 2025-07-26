@@ -3,11 +3,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from AlgorithmImports import QCAlgorithm, QuoteBar, Symbol, TradeBar
+from AlgorithmImports import QCAlgorithm, Symbol
 from scipy.stats import kurtosis, skew
 
 from framework.base_symbol_data import BaseSymbolData
 from framework.charts import BAR_TYPE
+from framework.helpers import LogLevel
 
 from .charts import ChartLineBreak
 from .config import LineBreakConfig
@@ -36,10 +37,9 @@ class LineBreakSymbolData(BaseSymbolData):
         self._lb_return_history: List[float] = []
         self._lb_return_timestamps: List[datetime] = []
         self._previous_close: Optional[float] = None
-        # --- REMEDIATION START: Restored State Tracking Attributes ---
         self._last_cs_stats_update: datetime = datetime.min
         self._last_processed_lb_time: datetime = datetime.min
-        # --- REMEDIATION END ---
+
         super().__init__(algo, symbol, params, strategy_logic)
 
     def _initialize_strategy_components(self):
@@ -51,28 +51,23 @@ class LineBreakSymbolData(BaseSymbolData):
             max_lookback=self.MAX_LOOKBACK,
         )
 
-    def _consolidation_handler(self, sender: object, consolidated_bar: BAR_TYPE):
-        """
-        Overrides the base handler to add Line Break-specific pre-processing.
-        """
-        bar_to_process = getattr(consolidated_bar, "Value", consolidated_bar)
-        if not isinstance(bar_to_process, (TradeBar, QuoteBar)):
-            return
-
-        # LB-specific pre-processing
-        self.collect_cs_return(bar_to_process)
-        self._cs_to_lb_tracker.on_candlestick_bar()
-
-        # Call base class update logic
-        super()._update(bar_to_process)
-
     def _on_new_bar(self, bar: BAR_TYPE, chart_updated: bool):
         """
         Hook called by the base _update method. Implements Line Break signal detection.
         """
+
+        # This logic runs for every consolidated bar, BEFORE checking for a new LB bar.
+        self.collect_cs_return(bar)
+        self._cs_to_lb_tracker.on_candlestick_bar()
+
+        # This logic runs ONLY when a new Line Break bar is formed.
         if chart_updated:
             self._cs_to_lb_tracker.on_linebreak_formed()
             self.update_lb_return_history()
+            self.log_fn(
+                f"[{self._symbol}] New LB bar formed! Total LB bars: {self._chart.custom_data.count}",
+                level=LogLevel.SPECIAL,
+            )
 
             vp = self._indicators.get("vp")
             profile = (
@@ -106,7 +101,6 @@ class LineBreakSymbolData(BaseSymbolData):
                 self._cs_return_collector = self._cs_return_collector[-1000:]
         self._previous_close = bar.close
 
-    # --- REMEDIATION START: Restored Robust CS Statistics Computation ---
     def compute_cs_statistics(self) -> CSReturnStats:
         """Computes CS return stats with robust error handling."""
         if len(self._cs_return_collector) < 50:
@@ -156,8 +150,6 @@ class LineBreakSymbolData(BaseSymbolData):
         self._last_cs_stats_update = self._algo.time
         return self._cs_stats
 
-    # --- REMEDIATION END ---
-
     def update_lb_return_history(self):
         """Updates the list of Line Break returns when a new LB bar is formed."""
         if not self._chart or self._chart.custom_data.count < 2:
@@ -176,7 +168,6 @@ class LineBreakSymbolData(BaseSymbolData):
 
             self._last_processed_lb_time = current_bar.end_time
 
-    # --- REMEDIATION START: Restored Missing Helper/Reporting Methods ---
     def get_cs_return_stats(self) -> Optional[CSReturnStats]:
         """Get CS return statistics with caching."""
         if self._cs_stats and (self._algo.time - self._last_cs_stats_update).days < 90:
@@ -201,8 +192,6 @@ class LineBreakSymbolData(BaseSymbolData):
             else None,
             "last_processed": self._last_processed_lb_time,
         }
-
-    # --- REMEDIATION END ---
 
     def get_cs_to_lb_stats(self) -> CSToLBStats:
         return self._cs_to_lb_tracker.get_comprehensive_stats()

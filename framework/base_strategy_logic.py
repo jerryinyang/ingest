@@ -1,4 +1,6 @@
 # region imports
+# endregion
+# region imports
 import math
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -6,6 +8,7 @@ from typing import Any, Callable, Dict, Iterable, List, Literal, Optional
 
 import numpy as np
 import pandas as pd
+from AlgorithmImports import *
 from scipy.stats import kurtosis, skew
 
 from framework.charts import BAR_TYPE
@@ -164,7 +167,6 @@ class BasePatternData(ABC):
     def pattern(self) -> tuple[int, ...]:
         return self._pattern
 
-    # --- REMEDIATION START: Added abstract property for architectural purity ---
     @property
     @abstractmethod
     def mechanical_direction(self) -> int:
@@ -174,9 +176,6 @@ class BasePatternData(ABC):
         """
         raise NotImplementedError
 
-    # --- REMEDIATION END ---
-
-    # --- REMEDIATION START: Restored Missing Methods and Properties ---
     @property
     def primary_direction(self) -> int:
         """Returns the primary trading direction based on qualification results."""
@@ -248,8 +247,6 @@ class BasePatternData(ABC):
         p_edge = 0.5 * math.erf(z_shrunk / math.sqrt(2.0))
         return p_edge
 
-    # --- REMEDIATION END ---
-
     def get_stats_for_direction(self, direction: Literal["long", "short"]) -> Dict:
         """Retrieves cached statistics for a given direction, regenerating if needed."""
         if self._cache_outdated:
@@ -304,7 +301,6 @@ class BasePatternData(ABC):
                 setup.update(bar)
                 self._cache_outdated = True
 
-    # --- REMEDIATION START: Restored Full Statistical Aggregation ---
     def aggregate_statistics(self) -> Dict[str, Dict]:
         """Computes comprehensive statistics with full MFE/MAE analysis."""
         if not self._cache_outdated:
@@ -406,9 +402,6 @@ class BasePatternData(ABC):
         self._cache_outdated = False
         return self._cache_stats
 
-    # --- REMEDIATION END ---
-
-    # --- REMEDIATION START: Restored Reporting Methods ---
     def to_dataframe(self) -> pd.DataFrame:
         """Converts metrics to DataFrame for analysis."""
         return pd.DataFrame(self._metrics)
@@ -440,5 +433,3 @@ class BasePatternData(ABC):
                 f"  Expectancy: {kpi.expectancy:.4f} | Win Rate: {kpi.win_rate:.2%} | Profit Factor: {kpi.profit_factor:.2f}"
             )
         return "\n".join(report_lines)
-
-    # --- REMEDIATION END ---

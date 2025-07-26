@@ -76,7 +76,6 @@ class PortfolioManager:
         """Returns the dictionary of all SymbolData objects."""
         return self._symbol_data
 
-    # --- REMEDIATION START: Restored Missing Analysis Methods ---
     def collect_setups(self) -> List[Dict]:
         """Collects all setup metrics across all symbols and patterns."""
         all_setups = []
@@ -148,8 +147,6 @@ class PortfolioManager:
                 f"Cleaned up inactive symbol data: {symbol}",
                 level=LogLevel.DEBUG,
             )
-
-    # --- REMEDIATION END ---
 
     def store_qualification_snapshot(self, qualified_contexts: List[Dict]):
         """Saves the latest qualification results for walk-forward validation."""

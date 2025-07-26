@@ -170,7 +170,6 @@ class CSSeriesDatabase:
             )
         self.last_refresh = datetime.now()
 
-    # --- REMEDIATION START: Restored Missing Methods ---
     def refresh_database(self, cs_stats: CSReturnStats, cs_to_lb_stats: CSToLBStats):
         """Replace oldest 20% of arrays with new ones using updated statistics."""
         if not self.arrays:
@@ -214,8 +213,6 @@ class CSSeriesDatabase:
             "last_refresh": self.last_refresh,
             "generation_seed": self.generation_seed,
         }
-
-    # --- REMEDIATION END ---
 
     def sample_array(self, index: Optional[int] = None) -> np.ndarray:
         """Sample a return array from the database."""
@@ -270,7 +267,6 @@ class PersistentPatternStore:
     Maintains historical synthetic pattern performance across qualification cycles.
     """
 
-    # --- REMEDIATION START: Restored State Tracking ---
     def __init__(self):
         self.pattern_iterations: Dict[
             tuple, Dict[int, List[SyntheticPatternInstance]]
@@ -278,8 +274,6 @@ class PersistentPatternStore:
         self.iteration_counter = 0
         self.last_processed_lb: Dict[str, datetime] = {}
         self.creation_time = datetime.now()
-
-    # --- REMEDIATION END ---
 
     def add_pattern_instance(
         self, pattern: tuple, iteration: int, cumulative_return: float, setup_count: int
@@ -337,7 +331,6 @@ class PersistentPatternStore:
         weight = sample_size / target_size
         return sortino * (0.5 + (0.5 * weight))
 
-    # --- REMEDIATION START: Restored Missing Methods ---
     def clear_old_iterations(self, keep_recent: int = 10000):
         """Remove oldest iterations beyond retention limit."""
         for pattern in list(self.pattern_iterations.keys()):
@@ -367,8 +360,6 @@ class PersistentPatternStore:
             "total_instances": total_instances,
             "avg_instances_per_iteration": total_instances / max(total_iterations, 1),
         }
-
-    # --- REMEDIATION END ---
 
 
 class EnhancedSyntheticGenerator:

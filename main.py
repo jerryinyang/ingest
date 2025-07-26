@@ -47,9 +47,6 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         self.set_end_date(2023, 1, 1)
         self.set_cash(100_000)
 
-        # --- Custom Logging ---
-        self.log_level_threshold = LogLevel.INFO
-
         # --- Strategy and Framework Initialization ---
         self.config = LineBreakConfig()
         self.pm = PortfolioManager(
@@ -58,8 +55,8 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
             symbol_data_class=LineBreakSymbolData,
             strategy_logic_class=LineBreakStrategyLogic,
         )
+
         self.rt = RobustnessTester(
-            self,
             self.config,
             layer2_engine_class=LineBreakLayer2SyntheticEngine,
             random_seed=self.RANDOM_SEED,
@@ -67,7 +64,9 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         )
 
         # --- Universe Selection ---
-        self.add_universe(self.coarse_selection_function)
+        # self.add_universe(self.coarse_selection_function)
+
+        self.qqq = self.add_equity("QQQ", self.config.resolution).symbol
         self.universe_settings.resolution = self.config.resolution
 
         # --- Scheduled Tasks ---
@@ -76,8 +75,6 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
             self.time_rules.at(0, 0),
             self.qualify_patterns,
         )
-
-        # --- REMEDIATION START: Restored Missing Schedules ---
         self.schedule.on(
             self.date_rules.year_start(),
             self.time_rules.midnight,
@@ -88,7 +85,6 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
             self.time_rules.midnight,
             self.cleanup_inactive_symbols,
         )
-        # --- REMEDIATION END ---
 
     def coarse_selection_function(
         self, coarse: List[CoarseFundamental]
@@ -106,7 +102,7 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         Handles additions and removals from the universe by delegating to the
         PortfolioManager.
         """
-        self.log(f"Securities changed: {changes}")
+        self.log(f"Securities changed: {changes}", level=LogLevel.DEBUG)
         self.pm.manage_symbols(changes)
 
     def on_data(self, slice: Slice):
@@ -150,7 +146,6 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
             f"Forward Performance Analysis: {forward_performance}", level=LogLevel.INFO
         )
 
-    # --- REMEDIATION START: Restored Missing Methods ---
     def report_pattern_stats(self):
         """Generates comprehensive pattern statistics report."""
         self.log("=" * 40, level=LogLevel.INFO)
@@ -197,8 +192,6 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
         """Daily cleanup of inactive symbol data."""
         self.pm.cleanup_inactive_symbols()
 
-    # --- REMEDIATION END ---
-
     def on_end_of_algorithm(self):
         """Handles cleanup at the end of the backtest."""
         self.log("--- End of Algorithm ---", level=LogLevel.INFO)
@@ -207,5 +200,5 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
 
     def log(self, message: str, level: LogLevel = LogLevel.DEBUG, **kwargs):
         """Custom logging function to control verbosity."""
-        if level.value >= self.log_level_threshold.value:
-            self.debug(f"{self.time} [{level.name}]: {message}")
+        if level.value >= self.config.log_level.value:
+            super().log(f"{self.time} [{level.name}]: {message}")

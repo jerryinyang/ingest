@@ -137,7 +137,7 @@ class ChartLineBreak(cChart):
         high_price = high if high > 0 else (close if is_bullish else open)
         low_price = low if low > 0 else (open if is_bullish else close)
 
-        if self._bar_type is TradeBar:
+        if self._bar_type.name == "TradeBar":
             return TradeBar(
                 time=timestamp,
                 symbol=self._symbol,
@@ -147,7 +147,7 @@ class ChartLineBreak(cChart):
                 close=close,
                 volume=volume,
             )
-        elif self._bar_type is QuoteBar:
+        elif self._bar_type.name == "QuoteBar":
             bar = Bar(open=open, high=high_price, low=low_price, close=close)
             return QuoteBar(
                 time=timestamp,

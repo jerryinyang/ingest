@@ -1,6 +1,10 @@
 # region imports
+# endregion
+# region imports
 from dataclasses import dataclass, field
 from datetime import timedelta  # noqa
+
+from AlgorithmImports import *
 
 from framework.helpers import BaseStrategyConfig
 

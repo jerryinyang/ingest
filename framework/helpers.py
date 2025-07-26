@@ -63,7 +63,7 @@ class BaseStrategyConfig:
     resolution_delta: timedelta = field(default_factory=lambda: timedelta(hours=4))
 
     # Pattern Statistics
-    log_level: LogLevel = field(default=LogLevel.INFO)
+    log_level: LogLevel = field(default=LogLevel.WARN)
     risk_mode: RiskMode = field(default=RiskMode.AGGRESSIVE)
 
     # Pattern Qualification Criteria

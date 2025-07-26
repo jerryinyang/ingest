@@ -1,5 +1,9 @@
 # region imports
+# endregion
+# region imports
 from typing import Callable, Dict, Optional
+
+from AlgorithmImports import *
 
 from framework.base_strategy_logic import BasePatternData, BaseStrategyLogic
 from framework.charts import BAR_TYPE
@@ -27,12 +31,9 @@ class LineBreakPatternData(BasePatternData):
             current_dir == -1 and new_pattern_mechanical_direction == 1
         )
 
-    # --- REMEDIATION START: Restored Missing Method for report_stats dependency ---
     def get_validation_trade_report(self, pattern_name: str) -> str:
         """Generate validation trade report for Line Break patterns."""
         return f"--- Validation Report for {pattern_name} ---\nValidation tracking: Active\n"
-
-    # --- REMEDIATION END ---
 
 
 class LineBreakStrategyLogic(BaseStrategyLogic):
@@ -78,6 +79,10 @@ class LineBreakStrategyLogic(BaseStrategyLogic):
         Detects Line Break signals. This is triggered only when a new LB bar is formed.
         """
         if not chart_updated or len(bars) < 2:
+            self.log_fn(
+                f"detect_signals early exit: chart_updated={chart_updated}, bars={len(bars)}",
+                level=LogLevel.SPECIAL,
+            )
             return None
 
         is_encoded, new_pattern_code = self.encode(bars)
@@ -105,9 +110,13 @@ class LineBreakStrategyLogic(BaseStrategyLogic):
             entry_atr=kwargs.get("entry_atr", 1e-6),
         )
 
+        self.log_fn(
+            f"Pattern {new_pattern_code} created and setup added. Total patterns: {len(self.patterns)}",
+            level=LogLevel.SPECIAL,
+        )
+
         return new_pattern_data
 
-    # --- REMEDIATION START: Restored Reporting Method ---
     def report_stats(self) -> Dict:
         """Generates stats reports for qualified patterns."""
         reports = {}
@@ -124,5 +133,3 @@ class LineBreakStrategyLogic(BaseStrategyLogic):
                 )
                 reports[report_key] = f"{setup_report}\n{validation_report}"
         return reports
-
-    # --- REMEDIATION END ---

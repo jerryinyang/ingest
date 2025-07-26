@@ -1,8 +1,11 @@
 # region imports
+# endregion
+# region imports
 from datetime import datetime
 from typing import Any, Callable, Dict, List
 
 import numpy as np
+from AlgorithmImports import *
 
 from framework.base_robustness import BaseLayer2SyntheticEngine
 from framework.helpers import LogLevel, deterministic_hash
@@ -37,12 +40,8 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
 
         self.cs_database = CSSeriesDatabase(seed=random_seed)
         self.pattern_store = PersistentPatternStore()
-
-        # --- REMEDIATION START: Restored Infrastructure Management ---
         self.initialize_symbol_infrastructure()
-        # --- REMEDIATION END ---
 
-    # --- REMEDIATION START: Restored Full Infrastructure Management ---
     def initialize_symbol_infrastructure(self):
         """Sets up per-symbol infrastructure with proper validation."""
         symbol = self.symbol_data._symbol
@@ -76,9 +75,6 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
             level=LogLevel.DEBUG,
         )
 
-    # --- REMEDIATION END ---
-
-    # --- REMEDIATION START: Fixed Iteration Management ---
     def generate_synthetic_iterations(self, num_iterations: int):
         """Enhanced synthetic generation with proper iteration tracking."""
         new_lb_returns = self.symbol_data.get_new_lb_returns(
@@ -115,8 +111,6 @@ class LineBreakLayer2SyntheticEngine(BaseLayer2SyntheticEngine):
         self.pattern_store.last_processed_lb[self.symbol_data._symbol.value] = (
             datetime.now()
         )
-
-    # --- REMEDIATION END ---
 
     def get_pattern_sortino_distribution(
         self, pattern: tuple, direction: str

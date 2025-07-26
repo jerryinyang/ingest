@@ -35,7 +35,7 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
 
     # --- Configuration and Constants ---
     RANDOM_SEED = 14
-    UNIVERSE_SIZE = 100
+    UNIVERSE_SIZE = 100  # for dynamic universes
 
     def Initialize(self):
         """
@@ -65,8 +65,9 @@ class StrategyAgnosticFrameworkAlgorithm(QCAlgorithm):
 
         # --- Universe Selection ---
         # self.add_universe(self.coarse_selection_function)
-
-        self.qqq = self.add_equity("QQQ", self.config.resolution).symbol
+        tickers = ["QQQ", "SPY", "IWM", "RSP"]
+        for ticker in tickers:
+            self.add_equity(ticker, self.config.resolution)
         self.universe_settings.resolution = self.config.resolution
 
         # --- Scheduled Tasks ---

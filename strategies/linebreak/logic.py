@@ -79,10 +79,6 @@ class LineBreakStrategyLogic(BaseStrategyLogic):
         Detects Line Break signals. This is triggered only when a new LB bar is formed.
         """
         if not chart_updated or len(bars) < 2:
-            self.log_fn(
-                f"detect_signals early exit: chart_updated={chart_updated}, bars={len(bars)}",
-                level=LogLevel.SPECIAL,
-            )
             return None
 
         is_encoded, new_pattern_code = self.encode(bars)
@@ -108,11 +104,6 @@ class LineBreakStrategyLogic(BaseStrategyLogic):
             entry_timestamp=current_timestamp,
             entry_price=bars[0].close,
             entry_atr=kwargs.get("entry_atr", 1e-6),
-        )
-
-        self.log_fn(
-            f"Pattern {new_pattern_code} created and setup added. Total patterns: {len(self.patterns)}",
-            level=LogLevel.SPECIAL,
         )
 
         return new_pattern_data

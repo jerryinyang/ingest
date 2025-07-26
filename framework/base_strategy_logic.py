@@ -95,7 +95,6 @@ class BaseSetup:
         self.is_active = True
         self.close_timestamp: Optional[datetime] = None
         self.close_reason = ""
-        self.management_type = "baseline"
 
     def update(self, bar: BAR_TYPE):
         """Appends a new bar to the setup's history if it is active."""

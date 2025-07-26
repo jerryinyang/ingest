@@ -59,10 +59,19 @@ class PortfolioManager:
                 self._symbol_data[symbol].set_eligibility(True)
 
     def on_data(self, data: Slice):
-        """Distributes incoming data slices to the relevant SymbolData instances."""
-        for symbol, symbol_data in self._symbol_data.items():
-            if data.contains_key(symbol) and data[symbol] is not None:
-                symbol_data._consolidator.update(data[symbol])
+        """
+        The OnData event handler. In this framework, its primary role is to advance
+        the algorithm's time. All data handling is managed automatically by the
+        subscription and consolidator registration with the LEAN engine.
+        This method is intentionally left empty.
+        """
+        pass
+
+        # Previous (now redundant) manual update
+        # """Distributes incoming data slices to the relevant SymbolData instances."""
+        # for symbol, symbol_data in self._symbol_data.items():
+        #     if data.contains_key(symbol) and data[symbol] is not None:
+        #         symbol_data._consolidator.update(data[symbol])
 
     def collect_pattern_data(self) -> Dict[Symbol, Dict[tuple, BasePatternData]]:
         """Collects all PatternData objects from all symbols for the RobustnessTester."""

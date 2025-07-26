@@ -1,20 +1,22 @@
 # region imports
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from AlgorithmImports import (
+    AverageTrueRange,
     IDataConsolidator,
     Indicator,
     NormalizedAverageTrueRange,
     QCAlgorithm,
-    QuoteBar,
     Symbol,
     TradeBar,
-    VolumeProfile,
 )
 
 from framework.charts import BAR_TYPE, cChart
 from framework.helpers import BaseStrategyConfig, LogLevel
+
+if TYPE_CHECKING:
+    from framework.base_strategy_logic import BaseStrategyLogic
 
 # endregion
 
@@ -35,7 +37,7 @@ class BaseSymbolData:
         algo: QCAlgorithm,
         symbol: Symbol,
         params: BaseStrategyConfig,
-        strategy_logic,  #: BaseStrategyLogic, # Avoid circular import
+        strategy_logic: "BaseStrategyLogic",
     ):
         """
         Initializes the base symbol data components.
@@ -53,6 +55,7 @@ class BaseSymbolData:
 
         # --- Core Components ---
         self._indicators: dict[str, Indicator] = {}
+
         self._bar_type: type = TradeBar
         self.is_eligible_for_new_trades: bool = True
         self._chart: Optional[cChart] = None
@@ -105,35 +108,22 @@ class BaseSymbolData:
         Initializes a set of default indicators useful for many strategies.
         Subclasses can override or extend this.
         """
+        self.register_indicator("atr", AverageTrueRange(14))
+        self.register_indicator("natr", NormalizedAverageTrueRange(14))
 
-        def quotebar_selector(quote_bar):
-            mid_price = (quote_bar.bid.close + quote_bar.ask.close) / 2.0
-            total_volume = quote_bar.last_bid_size + quote_bar.last_ask_size
-            return TradeBar(
-                quote_bar.time,
-                quote_bar.symbol,
-                mid_price,
-                mid_price,
-                mid_price,
-                mid_price,
-                total_volume,
+    def register_indicator(self, indicator_name: str, indicator_object: Indicator):
+        if indicator_name in self._indicators:
+            self.algo.log(
+                f"Failed to register indicator with the name: {indicator_name}. Name already exists.",
+                level=LogLevel.WARN,
             )
+        else:
+            self._indicators[indicator_name] = indicator_object
+            self._register_indicator_with_selector(self._indicators[indicator_name])
 
-        selector = quotebar_selector if self._bar_type == QuoteBar else None
-
-        if "natr" not in self._indicators:
-            self._indicators["natr"] = NormalizedAverageTrueRange(14)
-            self._register_indicator_with_selector("natr", self._indicators["natr"])
-
-        if "vp" not in self._indicators:
-            self._indicators["vp"] = VolumeProfile(f"{self._symbol}-volume-profile", 14)
-            self._register_indicator_with_selector("vp", self._indicators["vp"])
-
-    def _register_indicator_with_selector(
-        self, indicator_name: str, indicator: Indicator
-    ):
+    def _register_indicator_with_selector(self, indicator: Indicator):
         """Helper method to register indicators with proper QuoteBar handling."""
-        if self._bar_type == QuoteBar:
+        if self._bar_type.name == "QuoteBar":
             self._algo.register_indicator(
                 self._symbol,
                 indicator,
@@ -151,6 +141,33 @@ class BaseSymbolData:
         else:
             self._algo.register_indicator(self._symbol, indicator, self._consolidator)
 
+    def _extract_bar(self, data_object: object) -> Optional[BAR_TYPE]:
+        """
+        Robustly extracts a TradeBar/QuoteBar from a QC data object,
+        handling containers for securities like Futures.
+        """
+        try:
+            # First, check if the object itself is the correct type.
+            if hasattr(data_object, "get_type") and data_object.get_type().name in [
+                "TradeBar",
+                "QuoteBar",
+            ]:
+                return data_object
+
+            # Second, check if it's a container with a .Value property.
+            elif hasattr(
+                data_object, "Value"
+            ) and data_object.Value.get_type().name in ["TradeBar", "QuoteBar"]:
+                return data_object.Value
+
+        except Exception:
+            # Return None if a valid bar cannot be extracted.
+            self._algo.log(
+                f"Falied to extract valid bar for {self._symbol} consolidator update. Skipping...",
+                level=LogLevel.ERROR,
+            )
+            return None
+
     def _warmup_data(self):
         """Enhanced warmup with better error handling."""
         start_time = self._last_update_datetime or (
@@ -160,24 +177,8 @@ class BaseSymbolData:
             history_bars = self._algo.history[self._bar_type](
                 self._symbol, start_time, self._algo.time, self._params.resolution
             )
-
             for bar in history_bars:
-                bar_to_process = None
-
-                # First, check if the bar itself is the correct type using the reliable method.
-                # This correctly handles standard equities.
-                if bar.get_type().name in ["TradeBar", "QuoteBar"]:
-                    bar_to_process = bar
-
-                # Handle different data structures for futures/equities
-                # Second, check if it's a container object (like for Futures)
-                # by checking for .Value AND checking the type of .Value.
-                elif hasattr(bar, "Value") and bar.Value.get_type().name in [
-                    "TradeBar",
-                    "QuoteBar",
-                ]:
-                    bar_to_process = bar.Value
-
+                bar_to_process = self._extract_bar(bar)
                 if bar_to_process:
                     if (
                         self._last_update_datetime is None
@@ -185,23 +186,15 @@ class BaseSymbolData:
                     ):
                         self._consolidator.update(bar_to_process)
         except Exception as e:
-            self._algo.log(f"Warning: Warmup failed for {self._symbol}: {e}")
+            self._algo.log(
+                f"Warning: Warmup failed for {self._symbol}: {e}", level=LogLevel.ERROR
+            )
 
     def _consolidation_handler(self, sender: object, consolidated_bar: BAR_TYPE):
         """Handles consolidated bars and routes them for processing with robust type checking."""
-        bar_to_process = None
-
-        # First, check if the bar itself is the correct type using the reliable method.
-        if consolidated_bar.get_type().name in ["TradeBar", "QuoteBar"]:
-            bar_to_process = consolidated_bar
-        # Second, check if it's a container object (like for Futures)
-        elif hasattr(
-            consolidated_bar, "Value"
-        ) and consolidated_bar.Value.get_type().name in ["TradeBar", "QuoteBar"]:
-            bar_to_process = consolidated_bar.Value
+        bar_to_process = self._extract_bar(consolidated_bar)
 
         if not bar_to_process:
-            # If we couldn't extract a valid bar, we cannot proceed.
             return
 
         self._last_update_datetime = bar_to_process.end_time
@@ -209,10 +202,12 @@ class BaseSymbolData:
 
     def _update(self, bar: BAR_TYPE):
         """Core update logic. Processes a bar through the chart and strategy logic."""
-        if not self.is_eligible_for_new_trades or not self._chart:
+        if not self._chart:
             return
-
         chart_updated = self._chart.update(bar)
+
+        if not self.is_eligible_for_new_trades:
+            return
 
         if not self.is_ready():
             return
@@ -253,10 +248,8 @@ class BaseSymbolData:
             self._chart is not None
             and self._chart.custom_data.count >= self.MIN_BARS_COUNT
         )
-        required_indicators = ["natr", "vp"]
         indicators_ready = all(
-            key in self._indicators and self._indicators[key].is_ready
-            for key in required_indicators
+            self._indicators[key].is_ready for key in self._indicators.keys()
         )
         return chart_ready and indicators_ready
 

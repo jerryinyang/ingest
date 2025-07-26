@@ -3,12 +3,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from AlgorithmImports import QCAlgorithm, Symbol
+from AlgorithmImports import QCAlgorithm, Symbol, VolumeProfile
 from scipy.stats import kurtosis, skew
 
 from framework.base_symbol_data import BaseSymbolData
 from framework.charts import BAR_TYPE
-from framework.helpers import LogLevel
 
 from .charts import ChartLineBreak
 from .config import LineBreakConfig
@@ -51,6 +50,8 @@ class LineBreakSymbolData(BaseSymbolData):
             max_lookback=self.MAX_LOOKBACK,
         )
 
+        self.register_indicator("vp", VolumeProfile(20))
+
     def _on_new_bar(self, bar: BAR_TYPE, chart_updated: bool):
         """
         Hook called by the base _update method. Implements Line Break signal detection.
@@ -64,10 +65,6 @@ class LineBreakSymbolData(BaseSymbolData):
         if chart_updated:
             self._cs_to_lb_tracker.on_linebreak_formed()
             self.update_lb_return_history()
-            self.log_fn(
-                f"[{self._symbol}] New LB bar formed! Total LB bars: {self._chart.custom_data.count}",
-                level=LogLevel.SPECIAL,
-            )
 
             vp = self._indicators.get("vp")
             profile = (
